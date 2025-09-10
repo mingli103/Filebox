@@ -219,13 +219,19 @@ func (fb *FileBox) AddBlob(blobData []byte) (*BlobResponse, error) {
 // GetBlob retrieves a blob from a container file
 func (fb *FileBox) GetBlob(blobID string) ([]byte, error) {
 	// Parse blob ID to get file ID and blob index
-	parts := strings.Split(blobID, "-")
-	if len(parts) < 2 {
+	// Format: {fileID}-{blobIndex}
+	lastDash := strings.LastIndex(blobID, "-")
+	if lastDash == -1 {
 		return nil, fmt.Errorf("invalid blob ID format")
 	}
 
-	fileID := strings.Join(parts[:len(parts)-1], "-")
-	blobIndex := len(parts) - 1
+	fileID := blobID[:lastDash]
+	blobIndexStr := blobID[lastDash+1:]
+
+	var blobIndex int
+	if _, err := fmt.Sscanf(blobIndexStr, "%d", &blobIndex); err != nil {
+		return nil, fmt.Errorf("invalid blob index: %v", err)
+	}
 
 	fb.fileLock.RLock()
 	containerFile, exists := fb.files[fileID]
@@ -336,7 +342,7 @@ func (fb *FileBox) uploadContainerFile(fileID string) {
 	containerFile, exists := fb.files[fileID]
 	fb.fileLock.RUnlock()
 
-	if !exists || containerFile.Uploaded || containerFile.Uploading {
+	if !exists || containerFile.Uploaded || containerFile.Uploading || fb.s3Client == nil {
 		return
 	}
 
@@ -423,8 +429,8 @@ func (fb *FileBox) recoverFiles() {
 
 		fb.files[fidStr] = containerFile
 
-		// Queue for upload if not already uploaded
-		if !containerFile.Uploaded {
+		// Queue for upload if not already uploaded and S3 client is available
+		if !containerFile.Uploaded && fb.s3Client != nil {
 			go fb.uploadContainerFile(fidStr)
 		}
 	}
